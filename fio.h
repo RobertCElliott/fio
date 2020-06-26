@@ -20,7 +20,6 @@
 #include "fifo.h"
 #include "arch/arch.h"
 #include "os/os.h"
-#include "mutex.h"
 #include "log.h"
 #include "debug.h"
 #include "file.h"
@@ -28,6 +27,7 @@
 #include "ioengines.h"
 #include "iolog.h"
 #include "helpers.h"
+#include "minmax.h"
 #include "options.h"
 #include "profile.h"
 #include "fio_time.h"
@@ -36,6 +36,8 @@
 #include "lib/rand.h"
 #include "lib/rbtree.h"
 #include "lib/num2str.h"
+#include "lib/memalign.h"
+#include "smalloc.h"
 #include "client.h"
 #include "server.h"
 #include "stat.h"
@@ -44,6 +46,7 @@
 #include "io_u_queue.h"
 #include "workqueue.h"
 #include "steadystate.h"
+#include "lib/nowarn_snprintf.h"
 
 #ifdef CONFIG_SOLARISAIO
 #include <sys/asynch.h>
@@ -56,12 +59,16 @@
 /*
  * "local" is pseudo-policy
  */
-#define MPOL_LOCAL MPOL_MAX
+#ifndef MPOL_LOCAL
+#define MPOL_LOCAL 4
+#endif
 #endif
 
 #ifdef CONFIG_CUDA
 #include <cuda.h>
 #endif
+
+struct fio_sem;
 
 /*
  * offset generator types
@@ -77,7 +84,7 @@ enum {
 	__TD_F_READ_IOLOG,
 	__TD_F_REFILL_BUFFERS,
 	__TD_F_SCRAMBLE_BUFFERS,
-	__TD_F_VER_NONE,
+	__TD_F_DO_VERIFY,
 	__TD_F_PROFILE_OPS,
 	__TD_F_COMPRESS,
 	__TD_F_COMPRESS_LOG,
@@ -88,6 +95,7 @@ enum {
 	__TD_F_REGROW_LOGS,
 	__TD_F_MMAP_KEEP,
 	__TD_F_DIRS_CREATED,
+	__TD_F_CHECK_RATE,
 	__TD_F_LAST,		/* not a real bit, keep last */
 };
 
@@ -97,7 +105,7 @@ enum {
 	TD_F_READ_IOLOG		= 1U << __TD_F_READ_IOLOG,
 	TD_F_REFILL_BUFFERS	= 1U << __TD_F_REFILL_BUFFERS,
 	TD_F_SCRAMBLE_BUFFERS	= 1U << __TD_F_SCRAMBLE_BUFFERS,
-	TD_F_VER_NONE		= 1U << __TD_F_VER_NONE,
+	TD_F_DO_VERIFY		= 1U << __TD_F_DO_VERIFY,
 	TD_F_PROFILE_OPS	= 1U << __TD_F_PROFILE_OPS,
 	TD_F_COMPRESS		= 1U << __TD_F_COMPRESS,
 	TD_F_COMPRESS_LOG	= 1U << __TD_F_COMPRESS_LOG,
@@ -108,6 +116,7 @@ enum {
 	TD_F_REGROW_LOGS	= 1U << __TD_F_REGROW_LOGS,
 	TD_F_MMAP_KEEP		= 1U << __TD_F_MMAP_KEEP,
 	TD_F_DIRS_CREATED	= 1U << __TD_F_DIRS_CREATED,
+	TD_F_CHECK_RATE		= 1U << __TD_F_CHECK_RATE,
 };
 
 enum {
@@ -130,6 +139,7 @@ enum {
 	FIO_RAND_ZONE_OFF,
 	FIO_RAND_POISSON2_OFF,
 	FIO_RAND_POISSON3_OFF,
+	FIO_RAND_PRIO_CMDS,
 	FIO_RAND_NR_OFFS,
 };
 
@@ -158,6 +168,8 @@ void sk_out_drop(void);
 struct zone_split_index {
 	uint8_t size_perc;
 	uint8_t size_perc_prev;
+	uint64_t size;
+	uint64_t size_prev;
 };
 
 /*
@@ -194,7 +206,7 @@ struct thread_data {
 	struct timespec iops_sample_time;
 
 	volatile int update_rusage;
-	struct fio_mutex *rusage_sem;
+	struct fio_sem *rusage_sem;
 	struct rusage ru_start;
 	struct rusage ru_end;
 
@@ -204,7 +216,6 @@ struct thread_data {
 	unsigned int files_index;
 	unsigned int nr_open_files;
 	unsigned int nr_done_files;
-	unsigned int nr_normal_files;
 	union {
 		unsigned int next_file;
 		struct frand_state next_file_state;
@@ -225,9 +236,9 @@ struct thread_data {
 	pid_t pid;
 	char *orig_buffer;
 	size_t orig_buffer_size;
-	volatile int terminate;
 	volatile int runstate;
-	unsigned int last_was_sync;
+	volatile bool terminate;
+	bool last_was_sync;
 	enum fio_ddir last_ddir;
 
 	int mmapfd;
@@ -235,7 +246,7 @@ struct thread_data {
 	void *iolog_buf;
 	FILE *iolog_f;
 
-	unsigned long rand_seeds[FIO_RAND_NR_OFFS];
+	uint64_t rand_seeds[FIO_RAND_NR_OFFS];
 
 	struct frand_state bsrange_state[DDIR_RWDIR_CNT];
 	struct frand_state verify_state;
@@ -246,8 +257,10 @@ struct thread_data {
 	struct frand_state buf_state_prev;
 	struct frand_state dedupe_state;
 	struct frand_state zone_state;
+	struct frand_state prio_state;
 
 	struct zone_split_index **zone_state_index;
+	unsigned int num_open_zones;
 
 	unsigned int verify_batch;
 	unsigned int trim_batch;
@@ -307,7 +320,7 @@ struct thread_data {
 	 */
 	uint64_t rate_bps[DDIR_RWDIR_CNT];
 	uint64_t rate_next_io_time[DDIR_RWDIR_CNT];
-	unsigned long rate_bytes[DDIR_RWDIR_CNT];
+	unsigned long long rate_bytes[DDIR_RWDIR_CNT];
 	unsigned long rate_blocks[DDIR_RWDIR_CNT];
 	unsigned long long rate_io_issue_bytes[DDIR_RWDIR_CNT];
 	struct timespec lastrate[DDIR_RWDIR_CNT];
@@ -338,7 +351,7 @@ struct thread_data {
 	uint64_t this_io_bytes[DDIR_RWDIR_CNT];
 	uint64_t io_skip_bytes;
 	uint64_t zone_bytes;
-	struct fio_mutex *mutex;
+	struct fio_sem *sem;
 	uint64_t bytes_done[DDIR_RWDIR_CNT];
 
 	/*
@@ -365,6 +378,7 @@ struct thread_data {
 	unsigned int latency_qd_high;
 	unsigned int latency_qd_low;
 	unsigned int latency_failed;
+	unsigned int latency_stable_count;
 	uint64_t latency_ios;
 	int latency_end_run;
 
@@ -393,14 +407,17 @@ struct thread_data {
 	 * For IO replaying
 	 */
 	struct flist_head io_log_list;
+	FILE *io_log_rfile;
+	unsigned int io_log_current;
+	unsigned int io_log_checkmark;
+	unsigned int io_log_highmark;
+	struct timespec io_log_highmark_time;
 
 	/*
 	 * For tracking/handling discards
 	 */
 	struct flist_head trim_list;
 	unsigned long trim_entries;
-
-	struct flist_head next_rand_list;
 
 	/*
 	 * for fileservice, how often to switch to a new file
@@ -445,7 +462,7 @@ struct thread_data {
 	CUdevice  cu_dev;
 	CUcontext cu_ctx;
 	CUdeviceptr dev_mem_ptr;
-#endif	
+#endif
 
 };
 
@@ -465,7 +482,9 @@ enum {
 			break;						\
 		(td)->error = ____e;					\
 		if (!(td)->first_error)					\
-			snprintf(td->verror, sizeof(td->verror), "file:%s:%d, func=%s, error=%s", __FILE__, __LINE__, (func), (msg));		\
+			nowarn_snprintf(td->verror, sizeof(td->verror),	\
+					"file:%s:%d, func=%s, error=%s", \
+					__FILE__, __LINE__, (func), (msg)); \
 	} while (0)
 
 
@@ -490,7 +509,7 @@ enum {
 #define __fio_stringify_1(x)	#x
 #define __fio_stringify(x)	__fio_stringify_1(x)
 
-extern int exitall_on_terminate;
+extern bool exitall_on_terminate;
 extern unsigned int thread_number;
 extern unsigned int stat_number;
 extern int shm_id;
@@ -499,9 +518,10 @@ extern int output_format;
 extern int append_terse_output;
 extern int temp_stall_ts;
 extern uintptr_t page_mask, page_size;
-extern int read_only;
+extern bool read_only;
 extern int eta_print;
 extern int eta_new_line;
+extern unsigned int eta_interval_msec;
 extern unsigned long done_secs;
 extern int fio_gtod_offload;
 extern int fio_gtod_cpu;
@@ -509,9 +529,10 @@ extern enum fio_cs fio_clock_source;
 extern int fio_clock_source_set;
 extern int warnings_fatal;
 extern int terse_version;
-extern int is_backend;
+extern bool is_backend;
+extern bool is_local_backend;
 extern int nr_clients;
-extern int log_syslog;
+extern bool log_syslog;
 extern int status_interval;
 extern const char fio_version_string[];
 extern char *trigger_file;
@@ -522,21 +543,29 @@ extern char *aux_path;
 
 extern struct thread_data *threads;
 
+static inline bool is_running_backend(void)
+{
+	return is_backend || is_local_backend;
+}
+
+extern bool eta_time_within_slack(unsigned int time);
+
 static inline void fio_ro_check(const struct thread_data *td, struct io_u *io_u)
 {
-	assert(!(io_u->ddir == DDIR_WRITE && !td_write(td)));
+	assert(!(io_u->ddir == DDIR_WRITE && !td_write(td)) &&
+	       !(io_u->ddir == DDIR_TRIM && !td_trim(td)));
 }
 
 #define REAL_MAX_JOBS		4096
 
-static inline int should_fsync(struct thread_data *td)
+static inline bool should_fsync(struct thread_data *td)
 {
 	if (td->last_was_sync)
-		return 0;
+		return false;
 	if (td_write(td) || td->o.override_sync)
-		return 1;
+		return true;
 
-	return 0;
+	return false;
 }
 
 /*
@@ -558,6 +587,7 @@ extern void fio_fill_default_options(struct thread_data *);
 extern int fio_show_option_help(const char *);
 extern void fio_options_set_ioengine_opts(struct option *long_options, struct thread_data *td);
 extern void fio_options_dup_and_init(struct option *);
+extern char *fio_option_dup_subs(const char *);
 extern void fio_options_mem_dupe(struct thread_data *);
 extern void td_fill_rand_seeds(struct thread_data *);
 extern void td_fill_verify_state_seed(struct thread_data *);
@@ -608,8 +638,8 @@ enum {
 	TD_NR,
 };
 
-#define TD_ENG_FLAG_SHIFT	16
-#define TD_ENG_FLAG_MASK	((1U << 16) - 1)
+#define TD_ENG_FLAG_SHIFT	17
+#define TD_ENG_FLAG_MASK	((1U << 17) - 1)
 
 static inline void td_set_ioengine_flags(struct thread_data *td)
 {
@@ -634,8 +664,14 @@ extern const char *runstate_to_name(int runstate);
  */
 #define FIO_REAP_TIMEOUT	300
 
-#define TERMINATE_ALL		(-1U)
-extern void fio_terminate_threads(unsigned int);
+enum {
+	TERMINATE_NONE = 0,
+	TERMINATE_GROUP = 1,
+	TERMINATE_STONEWALL = 2,
+	TERMINATE_ALL = -1,
+};
+
+extern void fio_terminate_threads(unsigned int, unsigned int);
 extern void fio_mark_td_terminate(struct thread_data *);
 
 /*
@@ -679,16 +715,6 @@ extern void lat_target_reset(struct thread_data *);
 	    	 (i) < (td)->o.nr_files && ((f) = (td)->files[i]) != NULL; \
 		 (i)++)
 
-#define fio_assert(td, cond)	do {	\
-	if (!(cond)) {			\
-		int *__foo = NULL;	\
-		fprintf(stderr, "file:%s:%d, assert %s failed\n", __FILE__, __LINE__, #cond);	\
-		td_set_runstate((td), TD_EXITED);	\
-		(td)->error = EFAULT;		\
-		*__foo = 0;			\
-	}	\
-} while (0)
-
 static inline bool fio_fill_issue_time(struct thread_data *td)
 {
 	if (td->o.read_iolog_file ||
@@ -698,8 +724,7 @@ static inline bool fio_fill_issue_time(struct thread_data *td)
 	return false;
 }
 
-static inline bool __should_check_rate(struct thread_data *td,
-				       enum fio_ddir ddir)
+static inline bool option_check_rate(struct thread_data *td, enum fio_ddir ddir)
 {
 	struct thread_options *o = &td->o;
 
@@ -713,29 +738,30 @@ static inline bool __should_check_rate(struct thread_data *td,
 	return false;
 }
 
-static inline bool should_check_rate(struct thread_data *td)
+static inline bool __should_check_rate(struct thread_data *td)
 {
-	if (td->bytes_done[DDIR_READ] && __should_check_rate(td, DDIR_READ))
-		return true;
-	if (td->bytes_done[DDIR_WRITE] && __should_check_rate(td, DDIR_WRITE))
-		return true;
-	if (td->bytes_done[DDIR_TRIM] && __should_check_rate(td, DDIR_TRIM))
-		return true;
-
-	return false;
+	return (td->flags & TD_F_CHECK_RATE) != 0;
 }
 
-static inline unsigned int td_max_bs(struct thread_data *td)
+static inline bool should_check_rate(struct thread_data *td)
 {
-	unsigned int max_bs;
+	if (!__should_check_rate(td))
+		return false;
+
+	return ddir_rw_sum(td->bytes_done) != 0;
+}
+
+static inline unsigned long long td_max_bs(struct thread_data *td)
+{
+	unsigned long long max_bs;
 
 	max_bs = max(td->o.max_bs[DDIR_READ], td->o.max_bs[DDIR_WRITE]);
 	return max(td->o.max_bs[DDIR_TRIM], max_bs);
 }
 
-static inline unsigned int td_min_bs(struct thread_data *td)
+static inline unsigned long long td_min_bs(struct thread_data *td)
 {
-	unsigned int min_bs;
+	unsigned long long min_bs;
 
 	min_bs = min(td->o.min_bs[DDIR_READ], td->o.min_bs[DDIR_WRITE]);
 	return min(td->o.min_bs[DDIR_TRIM], min_bs);
@@ -746,20 +772,23 @@ static inline bool td_async_processing(struct thread_data *td)
 	return (td->flags & TD_F_NEED_LOCK) != 0;
 }
 
+static inline bool td_offload_overlap(struct thread_data *td)
+{
+	return td->o.serialize_overlap && td->o.io_submit_mode == IO_MODE_OFFLOAD;
+}
+
 /*
  * We currently only need to do locking if we have verifier threads
  * accessing our internal structures too
  */
-static inline void td_io_u_lock(struct thread_data *td)
+static inline void __td_io_u_lock(struct thread_data *td)
 {
-	if (td_async_processing(td))
-		pthread_mutex_lock(&td->io_u_lock);
+	pthread_mutex_lock(&td->io_u_lock);
 }
 
-static inline void td_io_u_unlock(struct thread_data *td)
+static inline void __td_io_u_unlock(struct thread_data *td)
 {
-	if (td_async_processing(td))
-		pthread_mutex_unlock(&td->io_u_lock);
+	pthread_mutex_unlock(&td->io_u_lock);
 }
 
 static inline void td_io_u_free_notify(struct thread_data *td)
@@ -789,11 +818,6 @@ static inline void td_flags_set(struct thread_data *td, unsigned int *flags,
 extern const char *fio_get_arch_string(int);
 extern const char *fio_get_os_string(int);
 
-#ifdef FIO_INTERNAL
-#define ARRAY_SIZE(x)    (sizeof((x)) / (sizeof((x)[0])))
-#define FIELD_SIZE(s, f) (sizeof(((typeof(s))0)->f))
-#endif
-
 enum {
 	__FIO_OUTPUT_TERSE	= 0,
 	__FIO_OUTPUT_JSON	= 1,
@@ -813,6 +837,7 @@ enum {
 	FIO_RAND_DIST_PARETO,
 	FIO_RAND_DIST_GAUSS,
 	FIO_RAND_DIST_ZONED,
+	FIO_RAND_DIST_ZONED_ABS,
 };
 
 #define FIO_DEF_ZIPF		1.1
@@ -831,5 +856,18 @@ enum {
 
 extern void exec_trigger(const char *);
 extern void check_trigger_file(void);
+
+extern bool in_flight_overlap(struct io_u_queue *q, struct io_u *io_u);
+extern pthread_mutex_t overlap_check;
+
+static inline void *fio_memalign(size_t alignment, size_t size, bool shared)
+{
+	return __fio_memalign(alignment, size, shared ? smalloc : malloc);
+}
+
+static inline void fio_memfree(void *ptr, size_t size, bool shared)
+{
+	return __fio_memfree(ptr, size, shared ? sfree : free);
+}
 
 #endif

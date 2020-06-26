@@ -22,8 +22,9 @@
  *
  */
 #include <locale.h>
-#include <malloc.h>
+#include <stdlib.h>
 #include <string.h>
+#include <libgen.h>
 
 #include <glib.h>
 #include <cairo.h>
@@ -37,7 +38,9 @@
 #include "gclient.h"
 #include "graph.h"
 
-static int gfio_server_running;
+struct gui main_ui;
+
+static bool gfio_server_running;
 static unsigned int gfio_graph_limit = 100;
 
 GdkColor gfio_color_white;
@@ -222,7 +225,7 @@ static void update_button_states(struct gui *ui, struct gui_entry *ge)
 	switch (ge->state) {
 	default:
 		gfio_report_error(ge, "Bad client state: %u\n", ge->state);
-		/* fall through to new state */
+		/* fall-through */
 	case GE_STATE_NEW:
 		connect_state = 1;
 		edit_state = 1;
@@ -460,10 +463,10 @@ static int send_job_file(struct gui_entry *ge)
 static void *server_thread(void *arg)
 {
 	fio_server_create_sk_key();
-	is_backend = 1;
-	gfio_server_running = 1;
+	is_backend = true;
+	gfio_server_running = true;
 	fio_start_server(NULL);
-	gfio_server_running = 0;
+	gfio_server_running = false;
 	fio_server_destroy_sk_key();
 	return NULL;
 }
@@ -471,7 +474,7 @@ static void *server_thread(void *arg)
 static void gfio_start_server(struct gui *ui)
 {
 	if (!gfio_server_running) {
-		gfio_server_running = 1;
+		gfio_server_running = true;
 		pthread_create(&ui->server_t, NULL, server_thread, NULL);
 		pthread_detach(ui->server_t);
 	}

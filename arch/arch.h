@@ -1,6 +1,8 @@
 #ifndef ARCH_H
 #define ARCH_H
 
+#include <stdatomic.h>
+
 #include "../lib/types.h"
 
 enum {
@@ -34,6 +36,14 @@ extern unsigned long arch_flags;
 
 #define ARCH_CPU_CLOCK_WRAPS
 
+#define atomic_load_acquire(p)					\
+	atomic_load_explicit((_Atomic typeof(*(p)) *)(p),	\
+			     memory_order_acquire)
+#define atomic_store_release(p, v)				\
+	atomic_store_explicit((_Atomic typeof(*(p)) *)(p), (v),	\
+			      memory_order_release)
+
+/* IWYU pragma: begin_exports */
 #if defined(__i386__)
 #include "arch-x86.h"
 #elif defined(__x86_64__)
@@ -66,6 +76,7 @@ extern unsigned long arch_flags;
 #endif
 
 #include "../lib/ffz.h"
+/* IWYU pragma: end_exports */
 
 #ifndef ARCH_HAVE_INIT
 static inline int arch_init(char *envp[])
@@ -73,5 +84,33 @@ static inline int arch_init(char *envp[])
 	return 0;
 }
 #endif
+
+#ifdef __alpha__
+/*
+ * alpha is the only exception, all other architectures
+ * have common numbers for new system calls.
+ */
+# ifndef __NR_io_uring_setup
+#  define __NR_io_uring_setup		535
+# endif
+# ifndef __NR_io_uring_enter
+#  define __NR_io_uring_enter		536
+# endif
+# ifndef __NR_io_uring_register
+#  define __NR_io_uring_register	537
+# endif
+#else /* !__alpha__ */
+# ifndef __NR_io_uring_setup
+#  define __NR_io_uring_setup		425
+# endif
+# ifndef __NR_io_uring_enter
+#  define __NR_io_uring_enter		426
+# endif
+# ifndef __NR_io_uring_register
+#  define __NR_io_uring_register	427
+# endif
+#endif
+
+#define ARCH_HAVE_IOURING
 
 #endif

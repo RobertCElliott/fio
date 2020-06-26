@@ -57,6 +57,13 @@ uint64_t usec_sleep(struct thread_data *td, unsigned long usec)
 		if (ts >= 1000000) {
 			req.tv_sec = ts / 1000000;
 			ts -= 1000000 * req.tv_sec;
+			/*
+			 * Limit sleep to ~1 second at most, otherwise we
+			 * don't notice then someone signaled the job to
+			 * exit manually.
+			 */
+			if (req.tv_sec > 1)
+				req.tv_sec = 1;
 		} else
 			req.tv_sec = 0;
 
@@ -118,6 +125,7 @@ bool ramp_time_over(struct thread_data *td)
 	if (utime_since_now(&td->epoch) >= td->o.ramp_time) {
 		td->ramp_time_over = true;
 		reset_all_stats(td);
+		reset_io_stats(td);
 		td_set_runstate(td, TD_RAMP);
 
 		/*

@@ -10,7 +10,6 @@
 #include <unistd.h>
 #include <sys/uio.h>
 #include <errno.h>
-#include <assert.h>
 
 #include "../fio.h"
 #include "../optgroup.h"
@@ -40,6 +39,8 @@ struct psyncv2_options {
 	void *pad;
 	unsigned int hipri;
 	unsigned int hipri_percentage;
+	unsigned int uncached;
+	unsigned int nowait;
 };
 
 static struct fio_option options[] = {
@@ -61,6 +62,24 @@ static struct fio_option options[] = {
 		.maxval	= 100,
 		.def    = "100",
 		.help	= "Probabilistically set RWF_HIPRI for pwritev2/preadv2",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_INVALID,
+	},
+	{
+		.name	= "uncached",
+		.lname	= "Uncached",
+		.type	= FIO_OPT_INT,
+		.off1	= offsetof(struct psyncv2_options, uncached),
+		.help	= "Use RWF_UNCACHED for buffered read/writes",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_INVALID,
+	},
+	{
+		.name	= "nowait",
+		.lname	= "RWF_NOWAIT",
+		.type	= FIO_OPT_BOOL,
+		.off1	= offsetof(struct psyncv2_options, nowait),
+		.help	= "Set RWF_NOWAIT for pwritev2/preadv2",
 		.category = FIO_OPT_C_ENGINE,
 		.group	= FIO_OPT_G_INVALID,
 	},
@@ -111,7 +130,8 @@ static int fio_io_end(struct thread_data *td, struct io_u *io_u, int ret)
 }
 
 #ifdef CONFIG_PWRITEV
-static int fio_pvsyncio_queue(struct thread_data *td, struct io_u *io_u)
+static enum fio_q_status fio_pvsyncio_queue(struct thread_data *td,
+					    struct io_u *io_u)
 {
 	struct syncio_data *sd = td->io_ops_data;
 	struct iovec *iov = &sd->iovecs[0];
@@ -138,7 +158,8 @@ static int fio_pvsyncio_queue(struct thread_data *td, struct io_u *io_u)
 #endif
 
 #ifdef FIO_HAVE_PWRITEV2
-static int fio_pvsyncio2_queue(struct thread_data *td, struct io_u *io_u)
+static enum fio_q_status fio_pvsyncio2_queue(struct thread_data *td,
+					     struct io_u *io_u)
 {
 	struct syncio_data *sd = td->io_ops_data;
 	struct psyncv2_options *o = td->eo;
@@ -149,8 +170,12 @@ static int fio_pvsyncio2_queue(struct thread_data *td, struct io_u *io_u)
 	fio_ro_check(td, io_u);
 
 	if (o->hipri &&
-	    (rand32_between(&sd->rand_state, 1, 100) <= o->hipri_percentage))
+	    (rand_between(&sd->rand_state, 1, 100) <= o->hipri_percentage))
 		flags |= RWF_HIPRI;
+	if (!td->o.odirect && o->uncached)
+		flags |= RWF_UNCACHED;
+	if (o->nowait)
+		flags |= RWF_NOWAIT;
 
 	iov->iov_base = io_u->xfer_buf;
 	iov->iov_len = io_u->xfer_buflen;
@@ -169,8 +194,8 @@ static int fio_pvsyncio2_queue(struct thread_data *td, struct io_u *io_u)
 }
 #endif
 
-
-static int fio_psyncio_queue(struct thread_data *td, struct io_u *io_u)
+static enum fio_q_status fio_psyncio_queue(struct thread_data *td,
+					   struct io_u *io_u)
 {
 	struct fio_file *f = io_u->file;
 	int ret;
@@ -190,7 +215,8 @@ static int fio_psyncio_queue(struct thread_data *td, struct io_u *io_u)
 	return fio_io_end(td, io_u, ret);
 }
 
-static int fio_syncio_queue(struct thread_data *td, struct io_u *io_u)
+static enum fio_q_status fio_syncio_queue(struct thread_data *td,
+					  struct io_u *io_u)
 {
 	struct fio_file *f = io_u->file;
 	int ret;
@@ -261,7 +287,8 @@ static void fio_vsyncio_set_iov(struct syncio_data *sd, struct io_u *io_u,
 	sd->queued++;
 }
 
-static int fio_vsyncio_queue(struct thread_data *td, struct io_u *io_u)
+static enum fio_q_status fio_vsyncio_queue(struct thread_data *td,
+					   struct io_u *io_u)
 {
 	struct syncio_data *sd = td->io_ops_data;
 

@@ -23,7 +23,6 @@
  */
 
 #include <string.h>
-#include <sys/types.h>
 #include <signal.h>
 #include <stdint.h>
 #include <locale.h>
@@ -93,12 +92,13 @@ static void reset_io_counters(struct thread_data *td, int all)
 			td->bytes_done[ddir] = 0;
 			td->rate_io_issue_bytes[ddir] = 0;
 			td->rate_next_io_time[ddir] = 0;
+			td->last_usec[ddir] = 0;
 		}
 	}
 
 	td->zone_bytes = 0;
 
-	td->last_was_sync = 0;
+	td->last_was_sync = false;
 	td->rwmix_issues = 0;
 
 	/*
@@ -230,10 +230,10 @@ void fio_mark_td_terminate(struct thread_data *td)
 {
 	fio_gettime(&td->terminate_time, NULL);
 	write_barrier();
-	td->terminate = 1;
+	td->terminate = true;
 }
 
-void fio_terminate_threads(unsigned int group_id)
+void fio_terminate_threads(unsigned int group_id, unsigned int terminate)
 {
 	struct thread_data *td;
 	pid_t pid = getpid();
@@ -242,7 +242,10 @@ void fio_terminate_threads(unsigned int group_id)
 	dprint(FD_PROCESS, "terminate group_id=%d\n", group_id);
 
 	for_each_td(td, i) {
-		if (group_id == TERMINATE_ALL || group_id == td->groupid) {
+		if ((terminate == TERMINATE_GROUP && group_id == TERMINATE_ALL) ||
+		    (terminate == TERMINATE_GROUP && group_id == td->groupid) ||
+		    (terminate == TERMINATE_STONEWALL && td->runstate >= TD_RUNNING) ||
+		    (terminate == TERMINATE_ALL)) {
 			dprint(FD_PROCESS, "setting terminate on %s/%d\n",
 						td->o.name, (int) td->pid);
 
@@ -366,6 +369,7 @@ int initialize_fio(char *envp[])
 	compiletime_assert((offsetof(struct jobs_eta, m_rate) % 8) == 0, "m_rate");
 
 	compiletime_assert(__TD_F_LAST <= TD_ENG_FLAG_SHIFT, "TD_ENG_FLAG_SHIFT");
+	compiletime_assert(BSSPLIT_MAX <= ZONESPLIT_MAX, "bsssplit/zone max");
 
 	err = endian_check();
 	if (err) {

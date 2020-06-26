@@ -20,7 +20,6 @@
 
 #include "../file.h"
 
-#define FIO_USE_GENERIC_RAND
 #define FIO_USE_GENERIC_INIT_RANDOM_STATE
 #define FIO_HAVE_FS_STAT
 #define FIO_HAVE_GETTID
@@ -32,11 +31,9 @@
 #define PTHREAD_STACK_MIN 4096
 #endif
 
-#define fio_swap16(x)	bswap16(x)
-#define fio_swap32(x)	bswap32(x)
-#define fio_swap64(x)	bswap64(x)
-
-typedef off_t off64_t;
+#define fio_swap16(x)	swap16(x)
+#define fio_swap32(x)	swap32(x)
+#define fio_swap64(x)	swap64(x)
 
 static inline int blockdev_size(struct fio_file *f, unsigned long long *bytes)
 {
@@ -66,10 +63,12 @@ static inline unsigned long long os_phys_mem(void)
 	return mem;
 }
 
+#ifndef CONFIG_HAVE_GETTID
 static inline int gettid(void)
 {
 	return (int)(intptr_t) pthread_self();
 }
+#endif
 
 static inline unsigned long long get_fs_free_size(const char *path)
 {

@@ -1,4 +1,5 @@
-#!/usr/bin/python2.7
+#!/usr/bin/env python3
+# Note: this script is python2 and python 3 compatible.
 #
 # fiologparser.py
 #
@@ -13,8 +14,11 @@
 #
 # to see per-interval average completion latency.
 
+from __future__ import absolute_import
+from __future__ import print_function
 import argparse
 import math
+from functools import reduce
 
 def parse_args():
     parser = argparse.ArgumentParser()

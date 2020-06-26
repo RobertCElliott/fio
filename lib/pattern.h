@@ -1,8 +1,6 @@
 #ifndef FIO_PARSE_PATTERN_H
 #define FIO_PARSE_PATTERN_H
 
-struct pattern_fmt;
-
 /**
  * Pattern format description. The input for 'parse_pattern'.
  * Describes format with its name and callback, which should
@@ -26,7 +24,6 @@ struct pattern_fmt {
 int parse_and_fill_pattern(const char *in, unsigned int in_len,
 			   char *out, unsigned int out_len,
 			   const struct pattern_fmt_desc *fmt_desc,
-			   unsigned int fmt_desc_sz,
 			   struct pattern_fmt *fmt,
 			   unsigned int *fmt_sz_out);
 

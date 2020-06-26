@@ -16,7 +16,6 @@
 
 #include "../file.h"
 
-#define FIO_USE_GENERIC_RAND
 #define FIO_USE_GENERIC_INIT_RANDOM_STATE
 #define FIO_HAVE_GETTID
 #define FIO_HAVE_CHARDEV_SIZE
@@ -33,8 +32,6 @@
  * so default to a lower number of max jobs supported
  */
 #define FIO_MAX_JOBS		128
-
-typedef off_t off64_t;
 
 #ifndef CONFIG_CLOCKID_T
 typedef unsigned int clockid_t;
@@ -91,16 +88,12 @@ static inline unsigned long long os_phys_mem(void)
 	return mem;
 }
 
+#ifndef CONFIG_HAVE_GETTID
 static inline int gettid(void)
 {
 	return mach_thread_self();
 }
-
-/*
- * For some reason, there's no header definition for fdatasync(), even
- * if it exists.
- */
-extern int fdatasync(int fd);
+#endif
 
 static inline bool fio_fallocate(struct fio_file *f, uint64_t offset, uint64_t len)
 {

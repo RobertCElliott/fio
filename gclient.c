@@ -1,4 +1,4 @@
-#include <malloc.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <glib.h>
@@ -121,7 +121,7 @@ static void gfio_text_op(struct fio_client *client, struct fio_net_cmd *cmd)
 	GtkTreeIter iter;
 	struct tm *tm;
 	time_t sec;
-	char tmp[64], timebuf[80];
+	char tmp[64], timebuf[96];
 
 	sec = p->log_sec;
 	tm = localtime(&sec);
@@ -298,6 +298,7 @@ static void gfio_thread_status_op(struct fio_client *client,
 	client_ts.members++;
 	client_ts.thread_number = p->ts.thread_number;
 	client_ts.groupid = p->ts.groupid;
+	client_ts.sig_figs = p->ts.sig_figs;
 
 	if (++sum_stat_nr == sum_stat_clients) {
 		strcpy(client_ts.name, "All clients");
@@ -317,7 +318,7 @@ static void gfio_update_thread_status(struct gui_entry *ge,
 	static char message[100];
 	const char *m = message;
 
-	strncpy(message, status_message, sizeof(message) - 1);
+	snprintf(message, sizeof(message), "%s", status_message);
 	gtk_progress_bar_set_text(GTK_PROGRESS_BAR(ge->thread_status_pb), m);
 	gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(ge->thread_status_pb), perc / 100.0);
 	gtk_widget_queue_draw(ge->ui->window);
@@ -329,7 +330,7 @@ static void gfio_update_thread_status_all(struct gui *ui, char *status_message,
 	static char message[100];
 	const char *m = message;
 
-	strncpy(message, status_message, sizeof(message) - 1);
+	snprintf(message, sizeof(message), "%s", status_message);
 	gtk_progress_bar_set_text(GTK_PROGRESS_BAR(ui->thread_status_pb), m);
 	gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(ui->thread_status_pb), perc / 100.0);
 	gtk_widget_queue_draw(ui->window);
@@ -379,24 +380,24 @@ static void gfio_update_client_eta(struct fio_client *client, struct jobs_eta *j
 			sprintf(output, "%3.1f%% done", perc);
 		}
 
-		iops_str[0] = num2str(je->iops[0], 4, 1, 0, N2S_PERSEC);
-		iops_str[1] = num2str(je->iops[1], 4, 1, 0, N2S_PERSEC);
-		iops_str[2] = num2str(je->iops[2], 4, 1, 0, N2S_PERSEC);
+		iops_str[0] = num2str(je->iops[0], je->sig_figs, 1, 0, N2S_PERSEC);
+		iops_str[1] = num2str(je->iops[1], je->sig_figs, 1, 0, N2S_PERSEC);
+		iops_str[2] = num2str(je->iops[2], je->sig_figs, 1, 0, N2S_PERSEC);
 
-		rate_str[0] = num2str(je->rate[0], 4, 10, i2p, N2S_BYTEPERSEC);
-		rate_alt[0] = num2str(je->rate[0], 4, 10, !i2p, N2S_BYTEPERSEC);
+		rate_str[0] = num2str(je->rate[0], je->sig_figs, 10, i2p, N2S_BYTEPERSEC);
+		rate_alt[0] = num2str(je->rate[0], je->sig_figs, 10, !i2p, N2S_BYTEPERSEC);
 		snprintf(tmp, sizeof(tmp), "%s (%s)", rate_str[0], rate_alt[0]);
 		gtk_entry_set_text(GTK_ENTRY(ge->eta.read_bw), tmp);
 		gtk_entry_set_text(GTK_ENTRY(ge->eta.read_iops), iops_str[0]);
 
-		rate_str[1] = num2str(je->rate[1], 4, 10, i2p, N2S_BYTEPERSEC);
-		rate_alt[1] = num2str(je->rate[1], 4, 10, !i2p, N2S_BYTEPERSEC);
+		rate_str[1] = num2str(je->rate[1], je->sig_figs, 10, i2p, N2S_BYTEPERSEC);
+		rate_alt[1] = num2str(je->rate[1], je->sig_figs, 10, !i2p, N2S_BYTEPERSEC);
 		snprintf(tmp, sizeof(tmp), "%s (%s)", rate_str[1], rate_alt[1]);
 		gtk_entry_set_text(GTK_ENTRY(ge->eta.write_bw), tmp);
 		gtk_entry_set_text(GTK_ENTRY(ge->eta.write_iops), iops_str[1]);
 
-		rate_str[2] = num2str(je->rate[2], 4, 10, i2p, N2S_BYTEPERSEC);
-		rate_alt[2] = num2str(je->rate[2], 4, 10, !i2p, N2S_BYTEPERSEC);
+		rate_str[2] = num2str(je->rate[2], je->sig_figs, 10, i2p, N2S_BYTEPERSEC);
+		rate_alt[2] = num2str(je->rate[2], je->sig_figs, 10, !i2p, N2S_BYTEPERSEC);
 		snprintf(tmp, sizeof(tmp), "%s (%s)", rate_str[2], rate_alt[2]);
 		gtk_entry_set_text(GTK_ENTRY(ge->eta.trim_bw), tmp);
 		gtk_entry_set_text(GTK_ENTRY(ge->eta.trim_iops), iops_str[2]);
@@ -463,24 +464,24 @@ static void gfio_update_all_eta(struct jobs_eta *je)
 			sprintf(output, "%3.1f%% done", perc);
 		}
 
-		iops_str[0] = num2str(je->iops[0], 4, 1, 0, N2S_PERSEC);
-		iops_str[1] = num2str(je->iops[1], 4, 1, 0, N2S_PERSEC);
-		iops_str[2] = num2str(je->iops[2], 4, 1, 0, N2S_PERSEC);
+		iops_str[0] = num2str(je->iops[0], je->sig_figs, 1, 0, N2S_PERSEC);
+		iops_str[1] = num2str(je->iops[1], je->sig_figs, 1, 0, N2S_PERSEC);
+		iops_str[2] = num2str(je->iops[2], je->sig_figs, 1, 0, N2S_PERSEC);
 
-		rate_str[0] = num2str(je->rate[0], 4, 10, i2p, N2S_BYTEPERSEC);
-		rate_alt[0] = num2str(je->rate[0], 4, 10, !i2p, N2S_BYTEPERSEC);
+		rate_str[0] = num2str(je->rate[0], je->sig_figs, 10, i2p, N2S_BYTEPERSEC);
+		rate_alt[0] = num2str(je->rate[0], je->sig_figs, 10, !i2p, N2S_BYTEPERSEC);
 		snprintf(tmp, sizeof(tmp), "%s (%s)", rate_str[0], rate_alt[0]);
 		gtk_entry_set_text(GTK_ENTRY(ui->eta.read_bw), tmp);
 		gtk_entry_set_text(GTK_ENTRY(ui->eta.read_iops), iops_str[0]);
 
-		rate_str[1] = num2str(je->rate[1], 4, 10, i2p, N2S_BYTEPERSEC);
-		rate_alt[1] = num2str(je->rate[1], 4, 10, !i2p, N2S_BYTEPERSEC);
+		rate_str[1] = num2str(je->rate[1], je->sig_figs, 10, i2p, N2S_BYTEPERSEC);
+		rate_alt[1] = num2str(je->rate[1], je->sig_figs, 10, !i2p, N2S_BYTEPERSEC);
 		snprintf(tmp, sizeof(tmp), "%s (%s)", rate_str[1], rate_alt[1]);
 		gtk_entry_set_text(GTK_ENTRY(ui->eta.write_bw), tmp);
 		gtk_entry_set_text(GTK_ENTRY(ui->eta.write_iops), iops_str[1]);
 
-		rate_str[2] = num2str(je->rate[2], 4, 10, i2p, N2S_BYTEPERSEC);
-		rate_alt[2] = num2str(je->rate[2], 4, 10, !i2p, N2S_BYTEPERSEC);
+		rate_str[2] = num2str(je->rate[2], je->sig_figs, 10, i2p, N2S_BYTEPERSEC);
+		rate_alt[2] = num2str(je->rate[2], je->sig_figs, 10, !i2p, N2S_BYTEPERSEC);
 		snprintf(tmp, sizeof(tmp), "%s (%s)", rate_str[2], rate_alt[2]);
 		gtk_entry_set_text(GTK_ENTRY(ui->eta.trim_bw), tmp);
 		gtk_entry_set_text(GTK_ENTRY(ui->eta.trim_iops), iops_str[2]);
@@ -587,10 +588,10 @@ static void gfio_add_job_op(struct fio_client *client, struct fio_net_cmd *cmd)
 	multitext_add_entry(&ge->eta.iotype, tmp);
 
 	i2p = is_power_of_2(o->kb_base);
-	c1 = num2str(o->min_bs[DDIR_READ], 4, 1, i2p, N2S_BYTE);
-	c2 = num2str(o->max_bs[DDIR_READ], 4, 1, i2p, N2S_BYTE);
-	c3 = num2str(o->min_bs[DDIR_WRITE], 4, 1, i2p, N2S_BYTE);
-	c4 = num2str(o->max_bs[DDIR_WRITE], 4, 1, i2p, N2S_BYTE);
+	c1 = num2str(o->min_bs[DDIR_READ], o->sig_figs, 1, i2p, N2S_BYTE);
+	c2 = num2str(o->max_bs[DDIR_READ], o->sig_figs, 1, i2p, N2S_BYTE);
+	c3 = num2str(o->min_bs[DDIR_WRITE], o->sig_figs, 1, i2p, N2S_BYTE);
+	c4 = num2str(o->max_bs[DDIR_WRITE], o->sig_figs, 1, i2p, N2S_BYTE);
 
 	sprintf(tmp, "%s-%s,%s-%s", c1, c2, c3, c4);
 	free(c1);
@@ -640,7 +641,7 @@ static void gfio_client_timed_out(struct fio_client *client)
 	gdk_threads_leave();
 }
 
-static void gfio_client_stop(struct fio_client *client, struct fio_net_cmd *cmd)
+static void gfio_client_stop(struct fio_client *client)
 {
 	struct gfio_client *gc = client->client_data;
 
@@ -1096,10 +1097,9 @@ static struct graph *setup_clat_graph(char *title, unsigned long long *ovals,
 
 static void gfio_show_clat_percentiles(struct gfio_client *gc,
 				       GtkWidget *vbox, struct thread_stat *ts,
-				       int ddir)
+				       int ddir, uint64_t *io_u_plat,
+				       unsigned long long nr, const char *type)
 {
-	unsigned int *io_u_plat = ts->io_u_plat[ddir];
-	unsigned long long nr = ts->clat_stat[ddir].samples;
 	fio_fp64_t *plist = ts->percentile_list;
 	unsigned int len, scale_down;
 	unsigned long long *ovals, minv, maxv;
@@ -1127,10 +1127,7 @@ static void gfio_show_clat_percentiles(struct gfio_client *gc,
 		base = "nsec";
         }
 
-	if (ts->clat_percentiles)
-		sprintf(tmp, "Completion percentiles (%s)", base);
-	else
-		sprintf(tmp, "Latency percentiles (%s)", base);
+	sprintf(tmp, "%s latency percentiles (%s)", type, base);
 
 	tree_view = gfio_output_clat_percentiles(ovals, plist, len, base, scale_down);
 	ge->clat_graph = setup_clat_graph(tmp, ovals, plist, len, 700.0, 300.0);
@@ -1158,18 +1155,21 @@ out:
 #define GFIO_CLAT	1
 #define GFIO_SLAT	2
 #define GFIO_LAT	4
+#define GFIO_HILAT	8
+#define GFIO_LOLAT	16
 
 static void gfio_show_ddir_status(struct gfio_client *gc, GtkWidget *mbox,
 				  struct group_run_stats *rs,
 				  struct thread_stat *ts, int ddir)
 {
 	const char *ddir_label[3] = { "Read", "Write", "Trim" };
+	const char *hilat, *lolat;
 	GtkWidget *frame, *label, *box, *vbox, *main_vbox;
-	unsigned long long min[3], max[3];
+	unsigned long long min[5], max[5];
 	unsigned long runt;
 	unsigned long long bw, iops;
 	unsigned int flags = 0;
-	double mean[3], dev[3];
+	double mean[5], dev[5];
 	char *io_p, *io_palt, *bw_p, *bw_palt, *iops_p;
 	char tmp[128];
 	int i2p;
@@ -1183,7 +1183,7 @@ static void gfio_show_ddir_status(struct gfio_client *gc, GtkWidget *mbox,
 	bw = (1000 * ts->io_bytes[ddir]) / runt;
 
 	iops = (1000 * (uint64_t)ts->total_io_u[ddir]) / runt;
-	iops_p = num2str(iops, 4, 1, 0, N2S_PERSEC);
+	iops_p = num2str(iops, ts->sig_figs, 1, 0, N2S_PERSEC);
 
 	box = gtk_hbox_new(FALSE, 3);
 	gtk_box_pack_start(GTK_BOX(mbox), box, TRUE, FALSE, 3);
@@ -1198,14 +1198,14 @@ static void gfio_show_ddir_status(struct gfio_client *gc, GtkWidget *mbox,
 	gtk_box_pack_start(GTK_BOX(main_vbox), box, TRUE, FALSE, 3);
 
 	label = new_info_label_in_frame(box, "IO");
-	io_p = num2str(ts->io_bytes[ddir], 4, 1, i2p, N2S_BYTE);
-	io_palt = num2str(ts->io_bytes[ddir], 4, 1, !i2p, N2S_BYTE);
+	io_p = num2str(ts->io_bytes[ddir], ts->sig_figs, 1, i2p, N2S_BYTE);
+	io_palt = num2str(ts->io_bytes[ddir], ts->sig_figs, 1, !i2p, N2S_BYTE);
 	snprintf(tmp, sizeof(tmp), "%s (%s)", io_p, io_palt);
 	gtk_label_set_text(GTK_LABEL(label), tmp);
 
 	label = new_info_label_in_frame(box, "Bandwidth");
-	bw_p = num2str(bw, 4, 1, i2p, ts->unit_base);
-	bw_palt = num2str(bw, 4, 1, !i2p, ts->unit_base);
+	bw_p = num2str(bw, ts->sig_figs, 1, i2p, ts->unit_base);
+	bw_palt = num2str(bw, ts->sig_figs, 1, !i2p, ts->unit_base);
 	snprintf(tmp, sizeof(tmp), "%s (%s)", bw_p, bw_palt);
 	gtk_label_set_text(GTK_LABEL(label), tmp);
 
@@ -1268,6 +1268,14 @@ static void gfio_show_ddir_status(struct gfio_client *gc, GtkWidget *mbox,
 		flags |= GFIO_CLAT;
 	if (calc_lat(&ts->lat_stat[ddir], &min[2], &max[2], &mean[2], &dev[2]))
 		flags |= GFIO_LAT;
+	if (calc_lat(&ts->clat_high_prio_stat[ddir], &min[3], &max[3], &mean[3], &dev[3])) {
+		flags |= GFIO_HILAT;
+		if (calc_lat(&ts->clat_low_prio_stat[ddir], &min[4], &max[4], &mean[4], &dev[4]))
+			flags |= GFIO_LOLAT;
+		/* we only want to print low priority statistics if other IOs were
+		 * submitted with the priority bit set
+		 */
+	}
 
 	if (flags) {
 		frame = gtk_frame_new("Latency");
@@ -1276,16 +1284,65 @@ static void gfio_show_ddir_status(struct gfio_client *gc, GtkWidget *mbox,
 		vbox = gtk_vbox_new(FALSE, 3);
 		gtk_container_add(GTK_CONTAINER(frame), vbox);
 
+		if (ts->lat_percentiles) {
+			hilat = "High priority total latency";
+			lolat = "Low priority total latency";
+		} else {
+			hilat = "High priority completion latency";
+			lolat = "Low priority completion latency";
+		}
+
 		if (flags & GFIO_SLAT)
 			gfio_show_lat(vbox, "Submission latency", min[0], max[0], mean[0], dev[0]);
 		if (flags & GFIO_CLAT)
 			gfio_show_lat(vbox, "Completion latency", min[1], max[1], mean[1], dev[1]);
 		if (flags & GFIO_LAT)
 			gfio_show_lat(vbox, "Total latency", min[2], max[2], mean[2], dev[2]);
+		if (flags & GFIO_HILAT)
+			gfio_show_lat(vbox, hilat, min[3], max[3], mean[3], dev[3]);
+		if (flags & GFIO_LOLAT)
+			gfio_show_lat(vbox, lolat, min[4], max[4], mean[4], dev[4]);
 	}
 
-	if (ts->clat_percentiles)
-		gfio_show_clat_percentiles(gc, main_vbox, ts, ddir);
+	if (ts->slat_percentiles && flags & GFIO_SLAT)
+		gfio_show_clat_percentiles(gc, main_vbox, ts, ddir,
+				ts->io_u_plat[FIO_SLAT][ddir],
+				ts->slat_stat[ddir].samples,
+				"Submission");
+	if (ts->clat_percentiles && flags & GFIO_CLAT) {
+		gfio_show_clat_percentiles(gc, main_vbox, ts, ddir,
+				ts->io_u_plat[FIO_CLAT][ddir],
+				ts->clat_stat[ddir].samples,
+				"Completion");
+		if (!ts->lat_percentiles) {
+			if (flags & GFIO_HILAT)
+				gfio_show_clat_percentiles(gc, main_vbox, ts, ddir,
+						ts->io_u_plat_high_prio[ddir],
+						ts->clat_high_prio_stat[ddir].samples,
+						"High priority completion");
+			if (flags & GFIO_LOLAT)
+				gfio_show_clat_percentiles(gc, main_vbox, ts, ddir,
+						ts->io_u_plat_low_prio[ddir],
+						ts->clat_low_prio_stat[ddir].samples,
+						"Low priority completion");
+		}
+	}
+	if (ts->lat_percentiles && flags & GFIO_LAT) {
+		gfio_show_clat_percentiles(gc, main_vbox, ts, ddir,
+				ts->io_u_plat[FIO_LAT][ddir],
+				ts->lat_stat[ddir].samples,
+				"Total");
+		if (flags & GFIO_HILAT)
+			gfio_show_clat_percentiles(gc, main_vbox, ts, ddir,
+					ts->io_u_plat_high_prio[ddir],
+					ts->clat_high_prio_stat[ddir].samples,
+					"High priority total");
+		if (flags & GFIO_LOLAT)
+			gfio_show_clat_percentiles(gc, main_vbox, ts, ddir,
+					ts->io_u_plat_low_prio[ddir],
+					ts->clat_low_prio_stat[ddir].samples,
+					"Low priority total");
+	}
 
 	free(io_p);
 	free(bw_p);

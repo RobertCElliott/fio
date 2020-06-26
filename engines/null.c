@@ -13,10 +13,7 @@
  * LD_LIBRARY_PATH=./engines ./fio examples/cpp_null.fio
  *
  */
-#include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <errno.h>
 #include <assert.h>
 
 #include "../fio.h"
@@ -59,8 +56,8 @@ static int null_commit(struct thread_data *td, struct null_data *nd)
 	return 0;
 }
 
-static int null_queue(struct thread_data *td, struct null_data *nd,
-		      struct io_u *io_u)
+static enum fio_q_status null_queue(struct thread_data *td,
+				    struct null_data *nd, struct io_u *io_u)
 {
 	fio_ro_check(td, io_u);
 
@@ -87,9 +84,9 @@ static void null_cleanup(struct null_data *nd)
 	}
 }
 
-static int null_init(struct thread_data *td, struct null_data **nd_ptr)
+static struct null_data *null_init(struct thread_data *td)
 {
-	struct null_data *nd = (struct null_data *) malloc(sizeof(**nd_ptr));
+	struct null_data *nd = (struct null_data *) malloc(sizeof(*nd));
 
 	memset(nd, 0, sizeof(*nd));
 
@@ -99,47 +96,49 @@ static int null_init(struct thread_data *td, struct null_data **nd_ptr)
 	} else
 		td->io_ops->flags |= FIO_SYNCIO;
 
-	*nd_ptr = nd;
-	return 0;
+	return nd;
 }
 
 #ifndef __cplusplus
 
 static struct io_u *fio_null_event(struct thread_data *td, int event)
 {
-	return null_event((struct null_data *)td->io_ops_data, event);
+	return null_event(td->io_ops_data, event);
 }
 
 static int fio_null_getevents(struct thread_data *td, unsigned int min_events,
 			      unsigned int max, const struct timespec *t)
 {
-	struct null_data *nd = (struct null_data *)td->io_ops_data;
+	struct null_data *nd = td->io_ops_data;
 	return null_getevents(nd, min_events, max, t);
 }
 
 static int fio_null_commit(struct thread_data *td)
 {
-	return null_commit(td, (struct null_data *)td->io_ops_data);
+	return null_commit(td, td->io_ops_data);
 }
 
-static int fio_null_queue(struct thread_data *td, struct io_u *io_u)
+static enum fio_q_status fio_null_queue(struct thread_data *td,
+					struct io_u *io_u)
 {
-	return null_queue(td, (struct null_data *)td->io_ops_data, io_u);
+	return null_queue(td, td->io_ops_data, io_u);
 }
 
 static int fio_null_open(struct thread_data *td, struct fio_file *f)
 {
-	return null_open((struct null_data *)td->io_ops_data, f);
+	return null_open(td->io_ops_data, f);
 }
 
 static void fio_null_cleanup(struct thread_data *td)
 {
-	null_cleanup((struct null_data *)td->io_ops_data);
+	null_cleanup(td->io_ops_data);
 }
 
 static int fio_null_init(struct thread_data *td)
 {
-	return null_init(td, (struct null_data **)&td->io_ops_data);
+	td->io_ops_data = null_init(td);
+	assert(td->io_ops_data);
+	return 0;
 }
 
 static struct ioengine_ops ioengine = {
@@ -172,7 +171,8 @@ static void fio_exit fio_null_unregister(void)
 struct NullData {
 	NullData(struct thread_data *td)
 	{
-		null_init(td, &impl_);
+		impl_ = null_init(td);
+		assert(impl_);
 	}
 
 	~NullData()
@@ -211,6 +211,7 @@ struct NullData {
 		return null_open(impl_, f);
 	}
 
+private:
 	struct null_data *impl_;
 };
 

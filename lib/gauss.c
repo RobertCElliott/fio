@@ -1,6 +1,5 @@
 #include <math.h>
 #include <string.h>
-#include <stdio.h>
 #include "../hash.h"
 #include "gauss.h"
 
@@ -52,7 +51,7 @@ void gauss_init(struct gauss_state *gs, unsigned long nranges, double dev,
 	gs->nranges = nranges;
 
 	if (dev != 0.0) {
-		gs->stddev = ceil((double) (nranges * 100.0) / dev);
+		gs->stddev = ceil((double)(nranges * dev) / 100.0);
 		if (gs->stddev > nranges / 2)
 			gs->stddev = nranges / 2;
 	}

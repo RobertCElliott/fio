@@ -5,12 +5,10 @@
  * of the file creation.
  */
 #include <stdio.h>
-#include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
 
 #include "../fio.h"
-#include "../filehash.h"
 
 struct fc_data {
 	enum fio_ddir stat_ddir;
@@ -51,13 +49,14 @@ static int open_file(struct thread_data *td, struct fio_file *f)
 		uint64_t nsec;
 
 		nsec = ntime_since_now(&start);
-		add_clat_sample(td, data->stat_ddir, nsec, 0, 0);
+		add_clat_sample(td, data->stat_ddir, nsec, 0, 0, 0);
 	}
 
 	return 0;
 }
 
-static int queue_io(struct thread_data *td, struct io_u fio_unused *io_u)
+static enum fio_q_status queue_io(struct thread_data *td,
+				  struct io_u fio_unused *io_u)
 {
 	return FIO_Q_COMPLETED;
 }
